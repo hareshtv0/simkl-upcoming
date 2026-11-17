@@ -383,35 +383,38 @@ def banner_colour(img):
     from PIL import Image
     h, w = img.size[1], img.size[0]
     lower = img.crop((0, int(h * 0.55), w, h))
-    r, g, b = lower.resize((1, 1), Image.BOX).getpixel((0, 0))
+    r, g, b = lower.convert("RGB").resize((1, 1), Image.BOX).getpixel((0, 0))
     hue, sat, _ = colorsys.rgb_to_hsv(r / 255, g / 255, b / 255)
     sat = min(max(sat, 0.25), 0.75)
-    return tuple(round(c * 255) for c in colorsys.hsv_to_rgb(hue, sat, 0.20))
+    return tuple(round(c * 255) for c in colorsys.hsv_to_rgb(hue, sat, 0.18))
 
 
 def make_overlay(image_bytes, line1, line2):
-    """Return JPEG bytes: the poster with a banner, tinted from the poster, holding the date and time."""
+    """Return JPEG bytes: the poster with a see-through fade at the bottom, tinted from the poster,
+    carrying the date and time."""
     import io
     from PIL import Image, ImageDraw
-    img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+    img = Image.open(io.BytesIO(image_bytes)).convert("RGBA")
     if img.width != 500:
         img = img.resize((500, round(img.height * 500 / img.width)))
     w, h = img.size
-    band = round(h * 0.15)
     colour = banner_colour(img)
-    fade = round(band * 0.5)  # soft blend from the artwork into the banner
+    fade = round(h * 0.30)
     grad = Image.new("RGBA", (w, fade))
     gd = ImageDraw.Draw(grad)
     for y in range(fade):
-        gd.line([(0, y), (w, y)], fill=colour + (round(255 * (y + 1) / fade * 0.9),))
-    img = img.convert("RGBA")
-    img.alpha_composite(grad, (0, h - band - fade))
-    draw = ImageDraw.Draw(img)
-    draw.rectangle([0, h - band, w, h], fill=colour + (255,))
-    f1 = fit_font(draw, line1, w * 0.78, round(band * 0.40))
-    f2 = fit_font(draw, line2, w * 0.78, round(band * 0.27))
-    draw.text((w / 2, h - band * 0.60), line1, font=f1, fill=(255, 255, 255), anchor="mm")
-    draw.text((w / 2, h - band * 0.22), line2, font=f2, fill=(222, 220, 212), anchor="mm")
+        t = (y + 1) / fade
+        gd.line([(0, y), (w, y)], fill=colour + (round(255 * 0.90 * t ** 1.5),))
+    img.alpha_composite(grad, (0, h - fade))
+    text = Image.new("RGBA", (w, h))
+    td = ImageDraw.Draw(text)
+    f1 = fit_font(td, line1, w * 0.78, round(h * 0.060))
+    f2 = fit_font(td, line2, w * 0.78, round(h * 0.040))
+    for (x, y), t, font, fill in (((w / 2, h - h * 0.090), line1, f1, (255, 255, 255, 255)),
+                                  ((w / 2, h - h * 0.033), line2, f2, (226, 224, 216, 255))):
+        td.text((x + 2, y + 2), t, font=font, fill=(0, 0, 0, 150), anchor="mm")  # soft shadow
+        td.text((x, y), t, font=font, fill=fill, anchor="mm")
+    img.alpha_composite(text)
     out = io.BytesIO()
     img.convert("RGB").save(out, "JPEG", quality=88)
     return out.getvalue()
