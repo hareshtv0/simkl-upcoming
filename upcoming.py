@@ -233,23 +233,56 @@ def make_ics(rows, now=None):
 
 # ---------- Output: HTML ----------
 
-def make_html(rows, tbc, now=None):
+def make_html(rows, tbc, now=None, today=None):
+    import calendar as cal_mod
     now = now or datetime.now(timezone.utc)
-    body = []
+    today = today or datetime.now(tz()).date()
+    by_day = {}
     for r in rows:
-        w, ep = r["w"], r["ep"] or {}
-        extra = f" - {escape(ep['title'])}" if ep.get("title") else ""
-        fin = " <b>(finale)</b>" if r["finale"] else ""
-        body.append(f"<tr><td>{escape(when_text(r))}</td><td>{escape(w['title'])}</td>"
-                    f"<td>{escape(r['what'])}{extra}{fin}</td></tr>")
-    for w in tbc:
-        body.append(f"<tr class=tbc><td>TBC</td><td>{escape(w['title'])}</td><td></td></tr>")
+        d = r["when"].date() if r["allday"] else r["when"].astimezone(tz()).date()
+        by_day.setdefault(d, []).append(r)
+    last = max(by_day) if by_day else today
+    months, y, m = [], today.year, today.month
+    while (y, m) <= (last.year, last.month):
+        months.append((y, m))
+        y, m = (y + 1, 1) if m == 12 else (y, m + 1)
+    out = []
+    for y, m in months or [(today.year, today.month)]:
+        out.append(f"<h2>{cal_mod.month_name[m]} {y}</h2><table class=cal><tr>"
+                   + "".join(f"<th>{d}</th>" for d in ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"))
+                   + "</tr>")
+        for week in cal_mod.Calendar(0).monthdayscalendar(y, m):
+            out.append("<tr>")
+            for day in week:
+                if not day:
+                    out.append("<td class=empty></td>")
+                    continue
+                d = date(y, m, day)
+                cls = " class=today" if d == today else ""
+                evs = []
+                for r in by_day.get(d, []):
+                    ep = r["ep"] or {}
+                    tip = escape(ep.get("title") or "")
+                    fin = " (finale)" if r["finale"] else ""
+                    evs.append(f"<div class=ev title='{tip}'>{escape(r['w']['title'])}"
+                               f" <small>{escape(r['what'])}{fin}</small></div>")
+                out.append(f"<td{cls}><b>{day}</b>{''.join(evs)}</td>")
+            out.append("</tr>")
+        out.append("</table>")
+    if tbc:
+        out.append("<h2>TBC</h2><ul>" + "".join(f"<li>{escape(w['title'])}</li>" for w in tbc) + "</ul>")
     stamp = now.astimezone(tz()).strftime("%d %b %Y %H:%M")
+    css = ("body{font:15px system-ui;margin:1rem;max-width:70rem}table.cal{border-collapse:collapse;width:100%;"
+           "table-layout:fixed}.cal th{text-align:left;padding:.3rem;border-bottom:1px solid #999}"
+           ".cal td{vertical-align:top;height:5.5rem;padding:.3rem;border:1px solid #ddd;overflow:hidden}"
+           ".cal td.empty{background:#f6f6f6}.cal td.today{outline:2px solid #2d7ff9}"
+           ".ev{margin-top:.2rem;padding:.1rem .3rem;background:#e6f1fb;border-radius:4px;font-size:12px}"
+           ".ev small{color:#444}@media(prefers-color-scheme:dark){body{background:#111;color:#eee}"
+           ".cal td{border-color:#333}.cal td.empty{background:#1a1a1a}.ev{background:#1f3a5a}.ev small{color:#bbb}}")
     return ("<!doctype html><meta charset=utf-8><meta name=viewport content='width=device-width'>"
-            "<title>Upcoming</title><style>body{font:16px system-ui;margin:1rem;max-width:44rem}"
-            "td{padding:.3rem .6rem;border-bottom:1px solid #ddd}.tbc{color:#888}</style>"
+            f"<title>Upcoming</title><style>{css}</style>"
             f"<h1>Upcoming from your Simkl watchlist</h1><p>Updated {escape(stamp)} ({escape(TZ_NAME)}).</p>"
-            f"<table>{''.join(body)}</table>")
+            + "".join(out))
 
 
 # ---------- Output: Stremio / Nuvio addon ----------
@@ -297,7 +330,7 @@ def build_site(watchlist, cal, out="site", today=None, now=None):
     today = today or datetime.now(tz()).date()
     rows, tbc = build_entries(watchlist, cal, today)
     nxt = next_by_title(rows)
-    write(f"{out}/index.html", make_html(rows, tbc, now))
+    write(f"{out}/index.html", make_html(rows, tbc, now, today))
     write(f"{out}/calendar.ics", make_ics(rows, now))
     write(f"{out}/manifest.json", json.dumps(manifest(), indent=1))
     skipped = 0

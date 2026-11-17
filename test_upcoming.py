@@ -48,7 +48,11 @@ class T(unittest.TestCase):
             self.assertIn("DTSTART:20261121T130000Z", ics)
             self.assertIn("DTEND:20261121T134500Z", ics)
             self.assertIn("DTSTART;VALUE=DATE:20270115", ics)
-            self.assertIn("TBC", open(f"{d}/index.html").read())
+            page = open(f"{d}/index.html").read()
+            self.assertIn("TBC", page)
+            self.assertIn("<h2>November 2026</h2>", page)
+            self.assertIn("<h2>January 2027</h2>", page)
+            self.assertIn("Show A <small>S2E8 (finale)</small>", page)
             m = json.load(open(f"{d}/manifest.json"))
             self.assertEqual(m["resources"], ["catalog"])
     def test_fold(self):
