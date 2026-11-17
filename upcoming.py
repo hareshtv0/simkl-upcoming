@@ -341,7 +341,100 @@ def make_html(rows, tbc, now=None, today=None):
     return ("<!doctype html><meta charset=utf-8><meta name=viewport content='width=device-width'>"
             f"<title>Upcoming</title><style>{css}</style>"
             f"<h1>Upcoming from your Simkl watchlist</h1><p>Updated {escape(stamp)} ({escape(TZ_NAME)}).</p>"
-            + "".join(out))
+            + "".join(out) + "<p><small>This product uses the TMDB API but is not endorsed or certified by TMDB.</small></p>")
+
+
+# ---------- Poster overlay (date and time printed on the poster) ----------
+
+FONTS = ("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+         "/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf")
+
+
+def get_bytes(url):
+    req = urllib.request.Request(url, headers={"User-Agent": f"{APP}/{VERSION}"})
+    with urllib.request.urlopen(req, timeout=30) as r:
+        return r.read()
+
+
+def load_font(size):
+    from PIL import ImageFont
+    for path in FONTS:
+        try:
+            return ImageFont.truetype(path, size)
+        except OSError:
+            pass
+    return ImageFont.load_default(size=size)
+
+
+def fit_font(draw, text, max_w, start, floor=14):
+    size = start
+    while size > floor:
+        font = load_font(size)
+        if draw.textlength(text, font=font) <= max_w:
+            return font
+        size -= 2
+    return load_font(floor)
+
+
+def make_overlay(image_bytes, line1, line2):
+    """Return JPEG bytes: the poster with a dark banner holding the date and time."""
+    import io
+    from PIL import Image, ImageDraw
+    img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+    if img.width != 500:
+        img = img.resize((500, round(img.height * 500 / img.width)))
+    w, h = img.size
+    band = round(h * 0.17)
+    draw = ImageDraw.Draw(img)
+    draw.rectangle([0, h - band, w, h], fill=(26, 26, 26))
+    f1 = fit_font(draw, line1, w * 0.92, round(band * 0.46))
+    f2 = fit_font(draw, line2, w * 0.92, round(band * 0.30))
+    draw.text((w / 2, h - band * 0.60), line1, font=f1, fill=(255, 255, 255), anchor="mm")
+    draw.text((w / 2, h - band * 0.20), line2, font=f2, fill=(211, 209, 199), anchor="mm")
+    out = io.BytesIO()
+    img.save(out, "JPEG", quality=88)
+    return out.getvalue()
+
+
+def banner_lines(r):
+    local = r["when"].astimezone(tz()) if not r["allday"] else r["when"]
+    if r["allday"]:
+        return local.strftime("%a %d %b"), r["what"]
+    return local.strftime("%a %d %b, %H:%M"), r["what"]
+
+
+def poster_source(w):
+    src = w.get("poster_url") or poster_url(w.get("poster"))
+    return src.replace("/w342/", "/w500/") if src else None
+
+
+def write_bytes(path, data):
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    with open(path, "wb") as fh:
+        fh.write(data)
+
+
+def make_poster_fn(out, base_url):
+    """Return poster_fn(w, r) -> hosted URL of the poster with the date printed on it, or None."""
+    try:
+        import PIL  # noqa: F401
+    except ImportError:
+        print("Pillow not installed: posters will have no date banner.")
+        return None
+
+    def fn(w, r):
+        src = poster_source(w)
+        if not src:
+            return None
+        try:
+            data = make_overlay(get_bytes(src), *banner_lines(r))
+        except Exception as e:
+            print(f"Note: no banner for {w['title']} ({e})")
+            return None
+        name = f"posters/{w['simkl']}-{r['when'].strftime('%Y%m%d%H%M')}.jpg"
+        write_bytes(f"{out}/{name}", data)
+        return f"{base_url.rstrip('/')}/{name}"
+    return fn
 
 
 # ---------- Output: Stremio / Nuvio addon ----------
@@ -350,7 +443,7 @@ def poster_url(p):
     return f"https://simkl.in/posters/{p}_m.jpg" if p else None
 
 
-def make_catalog(items, nxt, today=None, max_days=RUNNING_DAYS):
+def make_catalog(items, nxt, today=None, max_days=RUNNING_DAYS, poster_fn=None):
     """items = watchlist titles of one kind. Only titles with a known date, soonest first."""
     def sortkey(w):
         r = nxt.get(w["simkl"])
@@ -370,7 +463,7 @@ def make_catalog(items, nxt, today=None, max_days=RUNNING_DAYS):
         meta = {"id": w["imdb"], "type": "movie" if w["kind"] == "movie" else "series",
                 "name": w["title"], "releaseInfo": info,
                 "description": f"Next: {info}"}
-        poster = w.get("poster_url") or poster_url(w.get("poster"))
+        poster = (poster_fn(w, r) if poster_fn else None) or w.get("poster_url") or poster_url(w.get("poster"))
         if poster:
             meta["poster"] = poster
         metas.append(meta)
@@ -379,7 +472,7 @@ def make_catalog(items, nxt, today=None, max_days=RUNNING_DAYS):
 
 def manifest():
     return {"id": "community.simkl.upcoming", "version": VERSION, "name": "Simkl Upcoming",
-            "description": "Upcoming episodes and releases from your Simkl watchlist.",
+            "description": "Upcoming episodes and releases from your Simkl watchlist. This product uses the TMDB API but is not endorsed or certified by TMDB.",
             "resources": ["catalog"], "types": ["movie", "series"],
             "catalogs": [{"type": "series", "id": "simkl-upcoming-series", "name": "Upcoming Episodes"},
                          {"type": "movie", "id": "simkl-upcoming-movies", "name": "Upcoming Movies"}]}
@@ -391,7 +484,7 @@ def write(path, text):
         fh.write(text)
 
 
-def build_site(watchlist, cal, out="site", today=None, now=None, digital=None):
+def build_site(watchlist, cal, out="site", today=None, now=None, digital=None, poster_base=None):
     today = today or datetime.now(tz()).date()
     rows, tbc = build_entries(watchlist, cal, today, digital)
     nxt = next_by_title(rows)
@@ -399,9 +492,10 @@ def build_site(watchlist, cal, out="site", today=None, now=None, digital=None):
     write(f"{out}/calendar.ics", make_ics(rows, now))
     write(f"{out}/manifest.json", json.dumps(manifest(), indent=1))
     skipped = 0
+    poster_fn = make_poster_fn(out, poster_base) if poster_base else None
     for kind, cid, typ in (("series", "simkl-upcoming-series", "series"),
                            ("movie", "simkl-upcoming-movies", "movie")):
-        cat, sk = make_catalog([w for w in watchlist if w["kind"] == kind], nxt, today)
+        cat, sk = make_catalog([w for w in watchlist if w["kind"] == kind], nxt, today, poster_fn=poster_fn)
         skipped += sk
         write(f"{out}/catalog/{typ}/{cid}.json", json.dumps(cat))
     return rows, tbc, skipped
@@ -425,7 +519,7 @@ def main():
         listed, _ = build_entries(watchlist, cal, today, digital)
         by_id = {r["w"]["simkl"]: r["w"] for r in listed}
         enrich_titles(by_id.values(), tmdb_key)
-    rows, tbc, skipped = build_site(watchlist, cal, out, today, None, digital)
+    rows, tbc, skipped = build_site(watchlist, cal, out, today, None, digital, os.environ.get("SITE_URL"))
     print(f"{len(watchlist)} titles: {len({r['w']['simkl'] for r in rows})} with dates "
           f"({len(rows)} events), {len(tbc)} TBC (web page only), {skipped} dated but left out of the Nuvio catalogue (no IMDb id).")
 

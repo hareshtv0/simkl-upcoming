@@ -92,6 +92,36 @@ class T(unittest.TestCase):
     def test_singapore_time(self):
         r = {"when": datetime(2026, 11, 21, 9, 0, tzinfo=timezone.utc), "allday": False}
         self.assertEqual(u.when_text(r), "Sat 21 Nov 17:00")
+    def test_overlay_and_hosted_poster(self):
+        import io
+        from PIL import Image
+        buf = io.BytesIO(); Image.new("RGB", (342, 513), (120, 90, 200)).save(buf, "PNG")
+        jpg = u.make_overlay(buf.getvalue(), "Sat 21 Nov, 17:00", "E1221")
+        im = Image.open(io.BytesIO(jpg))
+        self.assertEqual(im.format, "JPEG")
+        self.assertEqual(im.size, (500, 750))
+        self.assertEqual(im.getpixel((5, 745)), (26, 26, 26))  # banner at the bottom
+        self.assertNotEqual(im.getpixel((5, 5)), (26, 26, 26))
+        self.assertEqual(u.banner_lines({"when": datetime(2026, 11, 21, 9, 0, tzinfo=timezone.utc), "allday": False, "what": "E1221"}),
+                         ("Sat 21 Nov, 17:00", "E1221"))
+        self.assertEqual(u.banner_lines({"when": datetime(2026, 12, 23, tzinfo=timezone.utc), "allday": True, "what": "Digital release"}),
+                         ("Wed 23 Dec", "Digital release"))
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(u, "get_bytes", return_value=buf.getvalue()):
+            wl = [dict(x, poster_url="https://image.tmdb.org/t/p/w342/p.jpg") for x in WL]
+            u.build_site(wl, CAL, d, TODAY, NOW, DIGITAL, "https://x.github.io/repo")
+            with open(f"{d}/catalog/series/simkl-upcoming-series.json") as f:
+                meta = json.load(f)["metas"][0]
+            self.assertEqual(meta["poster"], "https://x.github.io/repo/posters/1-202611211300.jpg")
+            import os
+            self.assertTrue(os.path.exists(f"{d}/posters/1-202611211300.jpg"))
+            with open(f"{d}/index.html") as f:
+                self.assertIn("not endorsed or certified by TMDB", f.read())
+    def test_overlay_falls_back_when_download_fails(self):
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(u, "get_bytes", side_effect=OSError("boom")):
+            wl = [dict(x, poster_url="https://image.tmdb.org/t/p/w342/p.jpg") for x in WL]
+            u.build_site(wl, CAL, d, TODAY, NOW, DIGITAL, "https://x.github.io/repo")
+            with open(f"{d}/catalog/series/simkl-upcoming-series.json") as f:
+                self.assertEqual(json.load(f)["metas"][0]["poster"], "https://image.tmdb.org/t/p/w342/p.jpg")
     def test_fold_and_months(self):
         self.assertTrue(all(len(l.encode()) <= 75 for l in u.fold("SUMMARY:" + "é" * 100).split("\r\n")))
         self.assertEqual(list(u.month_list(date(2026, 11, 17))), [(2026,11),(2026,12),(2027,1),(2027,2)])
