@@ -114,10 +114,11 @@ class T(unittest.TestCase):
             u.build_site(wl, CAL, d, TODAY, NOW, DIGITAL, "https://x.github.io/repo")
             with open(f"{d}/catalog/series/simkl-upcoming-series.json") as f:
                 meta = json.load(f)["metas"][0]
-            self.assertEqual(meta["poster"], "https://x.github.io/repo/posters/1-202611211300.jpg")
+            import re
+            self.assertRegex(meta["poster"], r"^https://x\.github\.io/repo/posters/1-[0-9a-f]{8}\.jpg$")
             self.assertNotIn("releaseInfo", meta)  # the poster already shows the date
             import os
-            self.assertTrue(os.path.exists(f"{d}/posters/1-202611211300.jpg"))
+            self.assertTrue(os.path.exists(f"{d}/posters/" + meta["poster"].rsplit("/", 1)[1]))
             with open(f"{d}/index.html") as f:
                 self.assertIn("not endorsed or certified by TMDB", f.read())
     def test_overlay_falls_back_when_download_fails(self):

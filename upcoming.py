@@ -14,6 +14,7 @@ Standard library only. Needs SIMKL_CLIENT_ID and SIMKL_TOKEN (same as lb2simkl.p
 TMDB_API_KEY for movie digital release dates. Movies without a known future digital date are left out;
 series only appear in the Nuvio rows while their next episode is within RUNNING_DAYS.
 """
+import hashlib
 import json
 import os
 import sys
@@ -451,7 +452,8 @@ def make_poster_fn(out, base_url):
         except Exception as e:
             print(f"Note: no banner for {w['title']} ({e})")
             return None
-        name = f"posters/{w['simkl']}-{r['when'].strftime('%Y%m%d%H%M')}.jpg"
+        tag = hashlib.sha1(data).hexdigest()[:8]  # new name whenever the image changes, so Nuvio refetches it
+        name = f"posters/{w['simkl']}-{tag}.jpg"
         write_bytes(f"{out}/{name}", data)
         return f"{base_url.rstrip('/')}/{name}"
     return fn
