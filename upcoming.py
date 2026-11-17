@@ -10,7 +10,9 @@ looks each title up in Simkl's public calendar files, and writes to ./site:
   catalog/...    Nuvio can install it under Settings > Addons
 
 A title with no date in the calendar window is shown as TBC (to be confirmed).
-Standard library only. Needs SIMKL_CLIENT_ID and SIMKL_TOKEN (same as lb2simkl.py).
+Standard library only. Needs SIMKL_CLIENT_ID and SIMKL_TOKEN (same as lb2simkl.py), plus a free
+TMDB_API_KEY for movie digital release dates. Movies without a known future digital date are left out;
+series only appear in the Nuvio rows while their next episode is within RUNNING_DAYS.
 """
 import json
 import os
@@ -26,6 +28,7 @@ API = "https://api.simkl.com"
 CDN = "https://data.simkl.in/calendar/v2"
 TZ_NAME = os.environ.get("CAL_TZ", "Asia/Singapore")
 MONTHS_AHEAD = 3  # Simkl publishes the current month plus three
+RUNNING_DAYS = 14  # a series counts as running if its next episode is within this many days
 
 
 def tz():
@@ -96,7 +99,7 @@ def month_list(today, ahead=MONTHS_AHEAD):
 def fetch_calendar(client_id, today):
     """Merge monthly calendar files into one {'calendar': [...], 'metadata': {...}} per type."""
     merged = {}
-    for typ in ("tv", "anime", "movie_release"):
+    for typ in ("tv", "anime"):
         cal, meta = [], {}
         for y, m in month_list(today):
             data = get_json(with_params(f"{CDN}/{y}/{m}/{typ}.json", client_id))
@@ -112,12 +115,50 @@ def parse_dt(s):
     return datetime.fromisoformat(s.replace("Z", "+00:00"))
 
 
-def parse_dvd(s):
-    """dvd_date arrives as MM/DD/YYYY."""
-    try:
-        return datetime.strptime(s, "%m/%d/%Y").date()
-    except (TypeError, ValueError):
+# ---------- TMDB: digital release dates for movies ----------
+
+def tmdb_digital_date(tmdb_id, key, today):
+    """Earliest DIGITAL release (TMDB release type 4) in any region that is still in the future.
+
+    Returns None when TMDB has no digital date yet, or when the film is already out digitally.
+    """
+    url = f"https://api.themoviedb.org/3/movie/{tmdb_id}/release_dates"
+    headers = {}
+    if len(key) > 40:  # v4 read-access token
+        headers["Authorization"] = f"Bearer {key}"
+    else:
+        url += f"?api_key={key}"
+    data = get_json(url, headers)
+    if not data:
         return None
+    dates = []
+    for region in data.get("results") or []:
+        for rd in region.get("release_dates") or []:
+            if rd.get("type") == 4 and rd.get("release_date"):
+                try:
+                    dates.append(datetime.fromisoformat(rd["release_date"].replace("Z", "+00:00")).date())
+                except ValueError:
+                    pass
+    if not dates:
+        return None
+    first = min(dates)
+    return first if first >= today else None
+
+
+def fetch_digital(watchlist, key, today):
+    """{simkl_id: date} for movies with a future digital release date."""
+    out = {}
+    for w in watchlist:
+        if w["kind"] != "movie" or not w.get("tmdb"):
+            continue
+        try:
+            d = tmdb_digital_date(w["tmdb"], key, today)
+        except Exception as e:
+            print(f"Note: TMDB lookup failed for {w['title']} ({e})")
+            continue
+        if d:
+            out[w["simkl"]] = d
+    return out
 
 
 # ---------- Join ----------
@@ -131,39 +172,26 @@ def ep_label(ep):
     return f"S{season}E{num}" if season is not None else f"E{num}"
 
 
-def build_entries(watchlist, cal, today):
-    """Return (dated, tbc). dated rows are sorted by when. Each row is a dict."""
+def build_entries(watchlist, cal, today, digital=None):
+    """Return (dated, tbc). Episodes come from Simkl's calendar; movies only from a digital release date."""
     by_id = {w["simkl"]: w for w in watchlist}
     rows = []
-    seen_movie_dates = set()
-    for typ in ("tv", "anime", "movie_release"):
-        meta = cal[typ]["metadata"]
+    for typ in ("tv", "anime"):
         for item in cal[typ]["calendar"]:
-            sid = item.get("simkl_id")
-            w = by_id.get(sid)
-            if not w:
+            w = by_id.get(item.get("simkl_id"))
+            ep = item.get("episode")
+            if not w or not ep or w["kind"] != "series":
                 continue
             when = parse_dt(item["date"])
             if when.astimezone(tz()).date() < today:
                 continue
-            ep = item.get("episode")
-            m = meta.get(str(sid)) or {}
-            if typ == "movie_release" or not ep:
-                key = ("rel", sid)
-                if key not in seen_movie_dates:
-                    seen_movie_dates.add(key)
-                    rows.append({"w": w, "when": when, "allday": True, "what": "Release",
-                                 "ep": None, "finale": None})
-                dvd = parse_dvd(m.get("dvd_date"))
-                if dvd and dvd >= today:
-                    rows.append({"w": w, "when": datetime(dvd.year, dvd.month, dvd.day,
-                                                          tzinfo=timezone.utc),
-                                 "allday": True, "what": "Home release", "ep": None,
-                                 "finale": None})
-            else:
-                rows.append({"w": w, "when": when, "allday": False,
-                             "what": ep_label(ep) or "Episode", "ep": ep,
-                             "finale": item.get("finale_type")})
+            rows.append({"w": w, "when": when, "allday": False, "what": ep_label(ep) or "Episode",
+                         "ep": ep, "finale": item.get("finale_type")})
+    for sid, d in (digital or {}).items():
+        w = by_id.get(sid)
+        if w and d >= today:
+            rows.append({"w": w, "when": datetime(d.year, d.month, d.day, tzinfo=timezone.utc),
+                         "allday": True, "what": "Digital release", "ep": None, "finale": None})
     rows.sort(key=lambda r: r["when"])
     dated_ids = {r["w"]["simkl"] for r in rows}
     tbc = sorted((w for w in watchlist if w["simkl"] not in dated_ids), key=lambda w: w["title"].lower())
@@ -171,13 +199,10 @@ def build_entries(watchlist, cal, today):
 
 
 def next_by_title(rows):
-    """Next upcoming row per title. For movies the home-release date wins over the plain release date."""
+    """First upcoming row per title (rows are already sorted)."""
     nxt = {}
     for r in rows:
         nxt.setdefault(r["w"]["simkl"], r)
-    for r in rows:
-        if r["what"] == "Home release":
-            nxt[r["w"]["simkl"]] = r
     return nxt
 
 
@@ -294,7 +319,7 @@ def poster_url(p):
     return f"https://simkl.in/posters/{p}_m.jpg" if p else None
 
 
-def make_catalog(items, nxt):
+def make_catalog(items, nxt, today=None, max_days=RUNNING_DAYS):
     """items = watchlist titles of one kind. Only titles with a known date, soonest first."""
     def sortkey(w):
         r = nxt.get(w["simkl"])
@@ -303,7 +328,10 @@ def make_catalog(items, nxt):
     for w in sorted(items, key=lambda w: (sortkey(w), w["title"].lower())):
         r = nxt.get(w["simkl"])
         if not r:
-            continue  # TBC titles stay out of the Nuvio rows (they are still on the web page)
+            continue  # no date: stays out of the Nuvio rows (still on the web page)
+        if w["kind"] == "series" and today is not None:
+            if (r["when"].astimezone(tz()).date() - today).days > max_days:
+                continue  # next episode is far off: new season pending, not a running show
         if not w.get("imdb"):
             skipped += 1  # Nuvio needs an IMDb id to open the title
             continue
@@ -331,9 +359,9 @@ def write(path, text):
         fh.write(text)
 
 
-def build_site(watchlist, cal, out="site", today=None, now=None):
+def build_site(watchlist, cal, out="site", today=None, now=None, digital=None):
     today = today or datetime.now(tz()).date()
-    rows, tbc = build_entries(watchlist, cal, today)
+    rows, tbc = build_entries(watchlist, cal, today, digital)
     nxt = next_by_title(rows)
     write(f"{out}/index.html", make_html(rows, tbc, now, today))
     write(f"{out}/calendar.ics", make_ics(rows, now))
@@ -341,7 +369,7 @@ def build_site(watchlist, cal, out="site", today=None, now=None):
     skipped = 0
     for kind, cid, typ in (("series", "simkl-upcoming-series", "series"),
                            ("movie", "simkl-upcoming-movies", "movie")):
-        cat, sk = make_catalog([w for w in watchlist if w["kind"] == kind], nxt)
+        cat, sk = make_catalog([w for w in watchlist if w["kind"] == kind], nxt, today)
         skipped += sk
         write(f"{out}/catalog/{typ}/{cid}.json", json.dumps(cat))
     return rows, tbc, skipped
@@ -355,7 +383,13 @@ def main():
     today = datetime.now(tz()).date()
     watchlist = fetch_watchlist(client_id, token)
     cal = fetch_calendar(client_id, today)
-    rows, tbc, skipped = build_site(watchlist, cal, out, today)
+    tmdb_key = os.environ.get("TMDB_API_KEY")
+    if tmdb_key:
+        digital = fetch_digital(watchlist, tmdb_key, today)
+    else:
+        digital = {}
+        print("TMDB_API_KEY not set: movies are left out (no digital release dates available).")
+    rows, tbc, skipped = build_site(watchlist, cal, out, today, None, digital)
     print(f"{len(watchlist)} titles: {len({r['w']['simkl'] for r in rows})} with dates "
           f"({len(rows)} events), {len(tbc)} TBC (web page only), {skipped} dated but left out of the Nuvio catalogue (no IMDb id).")
 

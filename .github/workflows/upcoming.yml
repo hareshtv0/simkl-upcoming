@@ -25,6 +25,7 @@ jobs:
         env:
           SIMKL_CLIENT_ID: ${{ secrets.SIMKL_CLIENT_ID }}
           SIMKL_TOKEN: ${{ secrets.SIMKL_TOKEN }}
+          TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}
         run: python3 upcoming.py site
       - uses: actions/upload-pages-artifact@v3
         with:
