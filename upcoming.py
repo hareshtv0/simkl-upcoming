@@ -171,10 +171,13 @@ def build_entries(watchlist, cal, today):
 
 
 def next_by_title(rows):
-    """First upcoming row per title (rows are already sorted)."""
+    """Next upcoming row per title. For movies the home-release date wins over the plain release date."""
     nxt = {}
     for r in rows:
         nxt.setdefault(r["w"]["simkl"], r)
+    for r in rows:
+        if r["what"] == "Home release":
+            nxt[r["w"]["simkl"]] = r
     return nxt
 
 

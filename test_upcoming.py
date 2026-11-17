@@ -41,6 +41,7 @@ class T(unittest.TestCase):
             self.assertEqual(series[0]["poster"], "https://simkl.in/posters/ab/cd_m.jpg")
             movies = json.load(open(f"{d}/catalog/movie/simkl-upcoming-movies.json"))["metas"]
             self.assertEqual([m["name"] for m in movies], ["Movie B", "Unknown D"])
+            self.assertTrue(movies[0]["releaseInfo"].startswith("Home release"))
             ics = open(f"{d}/calendar.ics", newline="").read()
             self.assertIn("BEGIN:VCALENDAR\r\n", ics)
             self.assertEqual(ics.count("BEGIN:VEVENT"), 4)
