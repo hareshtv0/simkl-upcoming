@@ -6,3 +6,4 @@
 #   - a title with the year, e.g. Inception 2010
 # Everything after # is ignored. They follow the same rules as Plan to Watch:
 # a film only shows up once TMDB has a future digital release date.
+https://letterboxd.com/hareshk/list/rewatch/
