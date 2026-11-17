@@ -237,13 +237,9 @@ def next_by_title(rows):
     return nxt
 
 
-def tz_label():
-    return "SGT" if TZ_NAME == "Asia/Singapore" else (datetime.now(tz()).tzname() or TZ_NAME)
-
-
 def when_text(r):
     local = r["when"].astimezone(tz()) if not r["allday"] else r["when"]
-    return local.strftime("%a %d %b") + ("" if r["allday"] else local.strftime(" %H:%M ") + tz_label())
+    return local.strftime("%a %d %b") + ("" if r["allday"] else local.strftime(" %H:%M"))
 
 
 # ---------- Output: ICS ----------

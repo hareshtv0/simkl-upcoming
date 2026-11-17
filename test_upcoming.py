@@ -89,9 +89,9 @@ class T(unittest.TestCase):
         with mock.patch.object(u, "get_json", return_value=None):
             u.enrich_titles([keep], "k" * 32)
         self.assertEqual(keep["title"], "Keep Me")
-    def test_singapore_time_label(self):
+    def test_singapore_time(self):
         r = {"when": datetime(2026, 11, 21, 9, 0, tzinfo=timezone.utc), "allday": False}
-        self.assertEqual(u.when_text(r), "Sat 21 Nov 17:00 SGT")
+        self.assertEqual(u.when_text(r), "Sat 21 Nov 17:00")
     def test_fold_and_months(self):
         self.assertTrue(all(len(l.encode()) <= 75 for l in u.fold("SUMMARY:" + "é" * 100).split("\r\n")))
         self.assertEqual(list(u.month_list(date(2026, 11, 17))), [(2026,11),(2026,12),(2027,1),(2027,2)])
