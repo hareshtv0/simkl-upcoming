@@ -89,6 +89,24 @@ class T(unittest.TestCase):
         with mock.patch.object(u, "get_json", return_value=None):
             u.enrich_titles([keep], "k" * 32)
         self.assertEqual(keep["title"], "Keep Me")
+    def test_rewatch_file(self):
+        import tempfile
+        def fake(path, key, params=""):
+            if path.startswith("find/"):
+                return {"movie_results": [{"id": 11, "title": "Odyssey", "release_date": "2026-07-17"}]}
+            if path == "search/movie" and "nothing" in params:
+                return {"results": []}
+            if path == "search/movie":
+                return {"results": [{"id": 22, "title": "Dune", "release_date": "2021-10-22"}]}
+            return {"imdb_id": "tt0000022"}
+        with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False) as f:
+            f.write("# c\n\ntt0000011  # odyssey\nDune 2021\nnothing here\n")
+        with mock.patch.object(u, "tmdb_get", side_effect=fake):
+            items = u.load_rewatch(f.name, "k")
+        self.assertEqual([i["imdb"] for i in items], ["tt0000011", "tt0000022"])
+        self.assertTrue(all(i["kind"] == "movie" for i in items))
+        self.assertEqual(u.load_rewatch("/nonexistent.txt", "k"), [])
+
     def test_singapore_time(self):
         r = {"when": datetime(2026, 11, 21, 9, 0, tzinfo=timezone.utc), "allday": False}
         self.assertEqual(u.when_text(r), "Sat 21 Nov 17:00")

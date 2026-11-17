@@ -18,6 +18,7 @@ import json
 import os
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 from datetime import date, datetime, timedelta, timezone
 from html import escape
@@ -174,6 +175,46 @@ def enrich_titles(items, key):
             w["title"] = title
         if poster:
             w["poster_url"] = poster
+
+
+def load_rewatch(path, key):
+    """Movies from rewatch.txt (one per line: an IMDb id like tt1375666, or a title with an optional year).
+
+    Lets you follow a film you have already watched (so it is not on Plan to Watch) until its digital release.
+    Returns watchlist-shaped items; lines TMDB cannot match are skipped with a note.
+    """
+    if not os.path.exists(path):
+        return []
+    out = []
+    for raw in open(path, encoding="utf-8"):
+        line = raw.split("#", 1)[0].strip()
+        if not line:
+            continue
+        try:
+            if line.lower().startswith("tt") and line[2:].isdigit():
+                res = (tmdb_get(f"find/{line}", key, "external_source=imdb_id") or {}).get("movie_results") or []
+                imdb = line
+            else:
+                words = line.rsplit(" ", 1)
+                year = words[1] if len(words) == 2 and words[1].isdigit() and len(words[1]) == 4 else None
+                q = words[0] if year else line
+                res = (tmdb_get("search/movie", key, "query=" + urllib.parse.quote(q) +
+                                (f"&year={year}" if year else "")) or {}).get("results") or []
+                imdb = None
+            if not res:
+                print(f"Note: rewatch.txt: no TMDB match for '{line}'")
+                continue
+            m = res[0]
+            if not imdb:
+                imdb = (tmdb_get(f"movie/{m['id']}/external_ids", key) or {}).get("imdb_id")
+                print(f"Note: rewatch.txt: '{line}' matched {m.get('title')} ({(m.get('release_date') or '')[:4]})")
+        except Exception as e:
+            print(f"Note: rewatch.txt: lookup failed for '{line}' ({e})")
+            continue
+        out.append({"simkl": f"rewatch:{m['id']}", "imdb": imdb, "tmdb": m["id"],
+                    "title": m.get("title") or line, "year": (m.get("release_date") or "")[:4] or None,
+                    "kind": "movie", "status": "rewatch", "poster": None})
+    return out
 
 
 def fetch_digital(watchlist, key, today):
@@ -416,6 +457,9 @@ def main():
     watchlist = fetch_watchlist(client_id, token)
     cal = fetch_calendar(client_id, today)
     tmdb_key = os.environ.get("TMDB_API_KEY")
+    if tmdb_key:
+        have = {w["imdb"] for w in watchlist if w.get("imdb")}
+        watchlist += [w for w in load_rewatch("rewatch.txt", tmdb_key) if w["imdb"] not in have]
     if tmdb_key:
         digital = fetch_digital(watchlist, tmdb_key, today)
     else:

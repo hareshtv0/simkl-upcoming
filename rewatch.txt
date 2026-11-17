@@ -1,0 +1,7 @@
+# Films you have already watched but want to see again when they come out digitally.
+# One per line: an IMDb id (most reliable) or a title, optionally followed by the year.
+# Everything after # is ignored. They follow the same rules as Plan to Watch:
+# a film only shows up once TMDB has a future digital release date.
+#
+# tt1375666            # example: Inception
+# Oppenheimer 2023
