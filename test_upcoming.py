@@ -74,6 +74,24 @@ class T(unittest.TestCase):
             u.tmdb_digital_date(5, "t" * 60, TODAY)
             self.assertEqual(g.call_args[0][1], {"Authorization": "Bearer " + "t" * 60})
             self.assertNotIn("api_key", g.call_args[0][0])
+    def test_english_title_and_poster(self):
+        payload = {"name": "Case Closed", "poster_path": "/abc.jpg"}
+        with mock.patch.object(u, "get_json", return_value=payload) as g:
+            self.assertEqual(u.tmdb_english("series", 9, "k" * 32),
+                             ("Case Closed", "https://image.tmdb.org/t/p/w342/abc.jpg"))
+            self.assertIn("tv/9?api_key=", g.call_args[0][0])
+            self.assertIn("language=en-US", g.call_args[0][0])
+        w = {"tmdb": 9, "kind": "series", "title": "Meitantei Conan", "poster": "x/y"}
+        with mock.patch.object(u, "get_json", return_value=payload):
+            u.enrich_titles([w], "k" * 32)
+        self.assertEqual((w["title"], w["poster_url"]), ("Case Closed", "https://image.tmdb.org/t/p/w342/abc.jpg"))
+        keep = {"tmdb": 9, "kind": "series", "title": "Keep Me", "poster": None}
+        with mock.patch.object(u, "get_json", return_value=None):
+            u.enrich_titles([keep], "k" * 32)
+        self.assertEqual(keep["title"], "Keep Me")
+    def test_singapore_time_label(self):
+        r = {"when": datetime(2026, 11, 21, 9, 0, tzinfo=timezone.utc), "allday": False}
+        self.assertEqual(u.when_text(r), "Sat 21 Nov 17:00 SGT")
     def test_fold_and_months(self):
         self.assertTrue(all(len(l.encode()) <= 75 for l in u.fold("SUMMARY:" + "é" * 100).split("\r\n")))
         self.assertEqual(list(u.month_list(date(2026, 11, 17))), [(2026,11),(2026,12),(2027,1),(2027,2)])

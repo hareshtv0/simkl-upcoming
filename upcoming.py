@@ -117,18 +117,23 @@ def parse_dt(s):
 
 # ---------- TMDB: digital release dates for movies ----------
 
+def tmdb_get(path, key, params=""):
+    url = f"https://api.themoviedb.org/3/{path}"
+    headers = {}
+    if len(key) > 40:  # v4 read-access token
+        headers["Authorization"] = f"Bearer {key}"
+        url += f"?{params}" if params else ""
+    else:
+        url += f"?api_key={key}" + (f"&{params}" if params else "")
+    return get_json(url, headers)
+
+
 def tmdb_digital_date(tmdb_id, key, today):
     """Earliest DIGITAL release (TMDB release type 4) in any region that is still in the future.
 
     Returns None when TMDB has no digital date yet, or when the film is already out digitally.
     """
-    url = f"https://api.themoviedb.org/3/movie/{tmdb_id}/release_dates"
-    headers = {}
-    if len(key) > 40:  # v4 read-access token
-        headers["Authorization"] = f"Bearer {key}"
-    else:
-        url += f"?api_key={key}"
-    data = get_json(url, headers)
+    data = tmdb_get(f"movie/{tmdb_id}/release_dates", key)
     if not data:
         return None
     dates = []
@@ -143,6 +148,32 @@ def tmdb_digital_date(tmdb_id, key, today):
         return None
     first = min(dates)
     return first if first >= today else None
+
+
+def tmdb_english(kind, tmdb_id, key):
+    """(English title, poster url) from TMDB, the same artwork source Nuvio shows. Either may be None."""
+    data = tmdb_get(f"{'movie' if kind == 'movie' else 'tv'}/{tmdb_id}", key, "language=en-US")
+    if not data:
+        return None, None
+    title = data.get("title") or data.get("name")
+    poster = f"https://image.tmdb.org/t/p/w342{data['poster_path']}" if data.get("poster_path") else None
+    return title, poster
+
+
+def enrich_titles(items, key):
+    """Replace the title with TMDB's English one and attach a TMDB poster, when TMDB knows the title."""
+    for w in items:
+        if not w.get("tmdb"):
+            continue
+        try:
+            title, poster = tmdb_english(w["kind"], w["tmdb"], key)
+        except Exception as e:
+            print(f"Note: TMDB lookup failed for {w['title']} ({e})")
+            continue
+        if title:
+            w["title"] = title
+        if poster:
+            w["poster_url"] = poster
 
 
 def fetch_digital(watchlist, key, today):
@@ -206,9 +237,13 @@ def next_by_title(rows):
     return nxt
 
 
+def tz_label():
+    return "SGT" if TZ_NAME == "Asia/Singapore" else (datetime.now(tz()).tzname() or TZ_NAME)
+
+
 def when_text(r):
     local = r["when"].astimezone(tz()) if not r["allday"] else r["when"]
-    return local.strftime("%a %d %b") + ("" if r["allday"] else local.strftime(" %H:%M"))
+    return local.strftime("%a %d %b") + ("" if r["allday"] else local.strftime(" %H:%M ") + tz_label())
 
 
 # ---------- Output: ICS ----------
@@ -339,8 +374,9 @@ def make_catalog(items, nxt, today=None, max_days=RUNNING_DAYS):
         meta = {"id": w["imdb"], "type": "movie" if w["kind"] == "movie" else "series",
                 "name": w["title"], "releaseInfo": info,
                 "description": f"Next: {info}"}
-        if poster_url(w.get("poster")):
-            meta["poster"] = poster_url(w["poster"])
+        poster = w.get("poster_url") or poster_url(w.get("poster"))
+        if poster:
+            meta["poster"] = poster
         metas.append(meta)
     return {"metas": metas}, skipped
 
@@ -389,6 +425,10 @@ def main():
     else:
         digital = {}
         print("TMDB_API_KEY not set: movies are left out (no digital release dates available).")
+    if tmdb_key:
+        listed, _ = build_entries(watchlist, cal, today, digital)
+        by_id = {r["w"]["simkl"]: r["w"] for r in listed}
+        enrich_titles(by_id.values(), tmdb_key)
     rows, tbc, skipped = build_site(watchlist, cal, out, today, None, digital)
     print(f"{len(watchlist)} titles: {len({r['w']['simkl'] for r in rows})} with dates "
           f"({len(rows)} events), {len(tbc)} TBC (web page only), {skipped} dated but left out of the Nuvio catalogue (no IMDb id).")
