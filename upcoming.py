@@ -376,23 +376,43 @@ def fit_font(draw, text, max_w, start, floor=14):
     return load_font(floor)
 
 
+def banner_colour(img):
+    """A dark shade of the poster's own colour, for the banner background."""
+    import colorsys
+    from PIL import Image
+    h, w = img.size[1], img.size[0]
+    lower = img.crop((0, int(h * 0.55), w, h))
+    r, g, b = lower.resize((1, 1), Image.BOX).getpixel((0, 0))
+    hue, sat, _ = colorsys.rgb_to_hsv(r / 255, g / 255, b / 255)
+    sat = min(max(sat, 0.25), 0.75)
+    return tuple(round(c * 255) for c in colorsys.hsv_to_rgb(hue, sat, 0.20))
+
+
 def make_overlay(image_bytes, line1, line2):
-    """Return JPEG bytes: the poster with a dark banner holding the date and time."""
+    """Return JPEG bytes: the poster with a banner, tinted from the poster, holding the date and time."""
     import io
     from PIL import Image, ImageDraw
     img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
     if img.width != 500:
         img = img.resize((500, round(img.height * 500 / img.width)))
     w, h = img.size
-    band = round(h * 0.17)
+    band = round(h * 0.15)
+    colour = banner_colour(img)
+    fade = round(band * 0.5)  # soft blend from the artwork into the banner
+    grad = Image.new("RGBA", (w, fade))
+    gd = ImageDraw.Draw(grad)
+    for y in range(fade):
+        gd.line([(0, y), (w, y)], fill=colour + (round(255 * (y + 1) / fade * 0.9),))
+    img = img.convert("RGBA")
+    img.alpha_composite(grad, (0, h - band - fade))
     draw = ImageDraw.Draw(img)
-    draw.rectangle([0, h - band, w, h], fill=(26, 26, 26))
-    f1 = fit_font(draw, line1, w * 0.92, round(band * 0.46))
-    f2 = fit_font(draw, line2, w * 0.92, round(band * 0.30))
+    draw.rectangle([0, h - band, w, h], fill=colour + (255,))
+    f1 = fit_font(draw, line1, w * 0.78, round(band * 0.40))
+    f2 = fit_font(draw, line2, w * 0.78, round(band * 0.27))
     draw.text((w / 2, h - band * 0.60), line1, font=f1, fill=(255, 255, 255), anchor="mm")
-    draw.text((w / 2, h - band * 0.20), line2, font=f2, fill=(211, 209, 199), anchor="mm")
+    draw.text((w / 2, h - band * 0.22), line2, font=f2, fill=(222, 220, 212), anchor="mm")
     out = io.BytesIO()
-    img.save(out, "JPEG", quality=88)
+    img.convert("RGB").save(out, "JPEG", quality=88)
     return out.getvalue()
 
 
@@ -460,10 +480,12 @@ def make_catalog(items, nxt, today=None, max_days=RUNNING_DAYS, poster_fn=None):
             skipped += 1  # Nuvio needs an IMDb id to open the title
             continue
         info = f"{r['what']} · {when_text(r)}"
+        banner = poster_fn(w, r) if poster_fn else None
         meta = {"id": w["imdb"], "type": "movie" if w["kind"] == "movie" else "series",
-                "name": w["title"], "releaseInfo": info,
-                "description": f"Next: {info}"}
-        poster = (poster_fn(w, r) if poster_fn else None) or w.get("poster_url") or poster_url(w.get("poster"))
+                "name": w["title"], "description": f"Next: {info}"}
+        if not banner:
+            meta["releaseInfo"] = info  # no date printed on the poster, so keep the text line
+        poster = banner or w.get("poster_url") or poster_url(w.get("poster"))
         if poster:
             meta["poster"] = poster
         metas.append(meta)
