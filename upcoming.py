@@ -295,20 +295,22 @@ def poster_url(p):
 
 
 def make_catalog(items, nxt):
-    """items = watchlist titles of one kind. Titles with a date first, then TBC."""
+    """items = watchlist titles of one kind. Only titles with a known date, soonest first."""
     def sortkey(w):
         r = nxt.get(w["simkl"])
         return (0, r["when"]) if r else (1, datetime.max.replace(tzinfo=timezone.utc))
     metas, skipped = [], 0
     for w in sorted(items, key=lambda w: (sortkey(w), w["title"].lower())):
+        r = nxt.get(w["simkl"])
+        if not r:
+            continue  # TBC titles stay out of the Nuvio rows (they are still on the web page)
         if not w.get("imdb"):
             skipped += 1  # Nuvio needs an IMDb id to open the title
             continue
-        r = nxt.get(w["simkl"])
-        info = f"{r['what']} · {when_text(r)}" if r else "TBC"
+        info = f"{r['what']} · {when_text(r)}"
         meta = {"id": w["imdb"], "type": "movie" if w["kind"] == "movie" else "series",
                 "name": w["title"], "releaseInfo": info,
-                "description": f"Next: {info}" if r else "Release date to be confirmed (TBC)"}
+                "description": f"Next: {info}"}
         if poster_url(w.get("poster")):
             meta["poster"] = poster_url(w["poster"])
         metas.append(meta)
@@ -317,7 +319,7 @@ def make_catalog(items, nxt):
 
 def manifest():
     return {"id": "community.simkl.upcoming", "version": VERSION, "name": "Simkl Upcoming",
-            "description": "Upcoming episodes and releases from your Simkl watchlist (TBC when unknown).",
+            "description": "Upcoming episodes and releases from your Simkl watchlist.",
             "resources": ["catalog"], "types": ["movie", "series"],
             "catalogs": [{"type": "series", "id": "simkl-upcoming-series", "name": "Upcoming Episodes"},
                          {"type": "movie", "id": "simkl-upcoming-movies", "name": "Upcoming Movies"}]}
@@ -355,7 +357,7 @@ def main():
     cal = fetch_calendar(client_id, today)
     rows, tbc, skipped = build_site(watchlist, cal, out, today)
     print(f"{len(watchlist)} titles: {len({r['w']['simkl'] for r in rows})} with dates "
-          f"({len(rows)} events), {len(tbc)} TBC, {skipped} left out of the Nuvio catalogue (no IMDb id).")
+          f"({len(rows)} events), {len(tbc)} TBC (web page only), {skipped} dated but left out of the Nuvio catalogue (no IMDb id).")
 
 
 if __name__ == "__main__":

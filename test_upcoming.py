@@ -35,12 +35,11 @@ class T(unittest.TestCase):
             rows, tbc, skipped = u.build_site(WL, CAL, d, TODAY, datetime(2026, 11, 17, tzinfo=timezone.utc))
             self.assertEqual(skipped, 1)  # Anime C has no imdb id
             series = json.load(open(f"{d}/catalog/series/simkl-upcoming-series.json"))["metas"]
-            self.assertEqual([m["name"] for m in series], ["Show A", "Not in list"])
+            self.assertEqual([m["name"] for m in series], ["Show A"])
             self.assertTrue(series[0]["releaseInfo"].startswith("S2E8"))
-            self.assertEqual(series[1]["releaseInfo"], "TBC")
             self.assertEqual(series[0]["poster"], "https://simkl.in/posters/ab/cd_m.jpg")
             movies = json.load(open(f"{d}/catalog/movie/simkl-upcoming-movies.json"))["metas"]
-            self.assertEqual([m["name"] for m in movies], ["Movie B", "Unknown D"])
+            self.assertEqual([m["name"] for m in movies], ["Movie B"])
             self.assertTrue(movies[0]["releaseInfo"].startswith("Home release"))
             ics = open(f"{d}/calendar.ics", newline="").read()
             self.assertIn("BEGIN:VCALENDAR\r\n", ics)
