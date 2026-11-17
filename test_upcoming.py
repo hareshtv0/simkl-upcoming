@@ -107,6 +107,20 @@ class T(unittest.TestCase):
         self.assertTrue(all(i["kind"] == "movie" for i in items))
         self.assertEqual(u.load_rewatch("/nonexistent.txt", "k"), [])
 
+    def test_letterboxd_list(self):
+        html = '<li data-item-name="Odyssey (2026)"></li><li data-item-name="Tom &amp; Jerry (2021)"></li>'
+        self.assertEqual(u.parse_letterboxd_list(html), [("Odyssey", "2026"), ("Tom & Jerry", "2021")])
+        self.assertEqual(u.parse_letterboxd_list("<p>nothing</p>"), [])
+        import tempfile
+        with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False) as f:
+            f.write("https://letterboxd.com/me/list/rewatch/\n")
+        hit = ({"id": 5, "title": "Odyssey", "release_date": "2026-07-17"}, "tt5")
+        with mock.patch.object(u, "fetch_letterboxd_list", return_value=[("Odyssey", "2026"), ("Odyssey", "2026")]), \
+             mock.patch.object(u, "resolve_rewatch", return_value=hit) as r:
+            items = u.load_rewatch(f.name, "k")
+        r.assert_called_with("Odyssey 2026", "k")
+        self.assertEqual([i["imdb"] for i in items], ["tt5"])  # duplicates collapse
+
     def test_singapore_time(self):
         r = {"when": datetime(2026, 11, 21, 9, 0, tzinfo=timezone.utc), "allday": False}
         self.assertEqual(u.when_text(r), "Sat 21 Nov 17:00")

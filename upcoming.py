@@ -16,12 +16,13 @@ series only appear in the Nuvio rows while their next episode is within RUNNING_
 """
 import json
 import os
+import re
 import sys
 import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import date, datetime, timedelta, timezone
-from html import escape
+from html import escape, unescape
 
 APP = "simkl-upcoming"
 VERSION = "1.0"
@@ -177,40 +178,96 @@ def enrich_titles(items, key):
             w["poster_url"] = poster
 
 
-def load_rewatch(path, key):
-    """Movies from rewatch.txt (one per line: an IMDb id like tt1375666, or a title with an optional year).
+BROWSER_UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+LB_PATTERNS = [  # same markup shapes lb2simkl.py reads from Letterboxd's watchlist page
+    re.compile(r'data-item-name="([^"]+?) \((\d{4})\)"'),
+    re.compile(r'data-film-name="([^"]+)"[^>]*?data-film-release-year="(\d{4})"'),
+]
 
-    Lets you follow a film you have already watched (so it is not on Plan to Watch) until its digital release.
-    Returns watchlist-shaped items; lines TMDB cannot match are skipped with a note.
+
+def parse_letterboxd_list(html):
+    for pat in LB_PATTERNS:
+        found = pat.findall(html)
+        if found:
+            return [(unescape(t), y) for t, y in found]
+    return []
+
+
+def fetch_letterboxd_list(url):
+    """[(title, year)] from a public Letterboxd list page (all pages)."""
+    base = url.split("?")[0].rstrip("/") + "/"
+    items = []
+    for page in range(1, 31):
+        req = urllib.request.Request(base + (f"page/{page}/" if page > 1 else ""),
+                                     headers={"User-Agent": BROWSER_UA})
+        try:
+            with urllib.request.urlopen(req, timeout=30) as r:
+                found = parse_letterboxd_list(r.read().decode("utf-8", "replace"))
+        except urllib.error.HTTPError as e:
+            if page == 1:
+                raise RuntimeError(f"HTTP {e.code}")
+            break
+        if not found or all(f in items for f in found):
+            break
+        items += [f for f in found if f not in items]
+    if not items:
+        raise RuntimeError("no films found (list is empty, private or blocked)")
+    return items
+
+
+def resolve_rewatch(line, key):
+    """One rewatch entry (IMDb id, or 'Title [year]') -> (tmdb result dict, imdb id) or None."""
+    if line.lower().startswith("tt") and line[2:].isdigit():
+        res = (tmdb_get(f"find/{line}", key, "external_source=imdb_id") or {}).get("movie_results") or []
+        return (res[0], line) if res else None
+    words = line.rsplit(" ", 1)
+    year = words[1] if len(words) == 2 and words[1].isdigit() and len(words[1]) == 4 else None
+    q = words[0] if year else line
+    res = (tmdb_get("search/movie", key, "query=" + urllib.parse.quote(q) +
+                    (f"&year={year}" if year else "")) or {}).get("results") or []
+    if not res:
+        return None
+    m = res[0]
+    imdb = (tmdb_get(f"movie/{m['id']}/external_ids", key) or {}).get("imdb_id")
+    print(f"Note: rewatch: '{line}' matched {m.get('title')} ({(m.get('release_date') or '')[:4]})")
+    return m, imdb
+
+
+def load_rewatch(path, key):
+    """Movies to follow even though they are not on Plan to Watch (already watched, want to rewatch).
+
+    rewatch.txt, one entry per line: an IMDb id, a title with optional year, or the address of a public
+    Letterboxd list (https://letterboxd.com/you/list/rewatch/), whose films are all followed.
+    Returns watchlist-shaped items; entries TMDB cannot match are skipped with a note.
     """
     if not os.path.exists(path):
         return []
-    out = []
+    entries = []
     for raw in open(path, encoding="utf-8"):
         line = raw.split("#", 1)[0].strip()
         if not line:
             continue
+        if line.lower().startswith("http"):
+            try:
+                entries += [f"{t} {y}" for t, y in fetch_letterboxd_list(line)]
+            except Exception as e:
+                print(f"Note: rewatch: could not read {line} ({e})")
+        else:
+            entries.append(line)
+    out, seen = [], set()
+    for line in entries:
         try:
-            if line.lower().startswith("tt") and line[2:].isdigit():
-                res = (tmdb_get(f"find/{line}", key, "external_source=imdb_id") or {}).get("movie_results") or []
-                imdb = line
-            else:
-                words = line.rsplit(" ", 1)
-                year = words[1] if len(words) == 2 and words[1].isdigit() and len(words[1]) == 4 else None
-                q = words[0] if year else line
-                res = (tmdb_get("search/movie", key, "query=" + urllib.parse.quote(q) +
-                                (f"&year={year}" if year else "")) or {}).get("results") or []
-                imdb = None
-            if not res:
-                print(f"Note: rewatch.txt: no TMDB match for '{line}'")
-                continue
-            m = res[0]
-            if not imdb:
-                imdb = (tmdb_get(f"movie/{m['id']}/external_ids", key) or {}).get("imdb_id")
-                print(f"Note: rewatch.txt: '{line}' matched {m.get('title')} ({(m.get('release_date') or '')[:4]})")
+            hit = resolve_rewatch(line, key)
         except Exception as e:
-            print(f"Note: rewatch.txt: lookup failed for '{line}' ({e})")
+            print(f"Note: rewatch: lookup failed for '{line}' ({e})")
             continue
+        if not hit:
+            print(f"Note: rewatch: no TMDB match for '{line}'")
+            continue
+        m, imdb = hit
+        if m["id"] in seen:
+            continue
+        seen.add(m["id"])
         out.append({"simkl": f"rewatch:{m['id']}", "imdb": imdb, "tmdb": m["id"],
                     "title": m.get("title") or line, "year": (m.get("release_date") or "")[:4] or None,
                     "kind": "movie", "status": "rewatch", "poster": None})

@@ -1,7 +1,8 @@
 # Films you have already watched but want to see again when they come out digitally.
-# One per line: an IMDb id (most reliable) or a title, optionally followed by the year.
+# One per line, any of:
+#   - the address of a public Letterboxd list (every film on it is followed), e.g.
+#       https://letterboxd.com/yourname/list/rewatch/
+#   - an IMDb id, e.g. tt1375666
+#   - a title with the year, e.g. Inception 2010
 # Everything after # is ignored. They follow the same rules as Plan to Watch:
 # a film only shows up once TMDB has a future digital release date.
-#
-# tt1375666            # example: Inception
-# Oppenheimer 2023
